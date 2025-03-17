@@ -1,13 +1,9 @@
-// WiFi Probe Request Sniffer + LoRa SX1262 Transmitter (Heltec Wireless Stick V3)
+// Simple WiFi Probe Request Sniffer)
 
 #include <WiFi.h>
-#include <RadioLib.h>
 extern "C" {
   #include "esp_wifi.h"
 }
-
-// Create an instance of SX1262 driver (NSS, DIO1, RESET, BUSY)
-SX1262 lora = new Module(8, 14, 12, 13);
 
 // Channel hopping setup
 const int wifiChannels[] = {1, 6, 11};
@@ -19,17 +15,6 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  Serial.println("[SX1262] Initializing...");
-  int state = lora.begin(915.0);  // 915 US
-
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.println("LoRa Init success!");
-  } else {
-    Serial.print("LoRa Init failed, code: ");
-    Serial.println(state);
-    while (true);  // Halt
-  }
-
   // Set Wi-Fi to promiscuous mode
   Serial.println("Starting Wi-Fi sniffer...");
 
@@ -37,7 +22,7 @@ void setup() {
   esp_wifi_start();          // Start Wi-Fi (needed for promiscuous mode)
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);  // channel index 1,6,11
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);  // Use channel 6 (busy channel)
 
   Serial.println("Sniffer setup complete.");
 }
@@ -76,23 +61,11 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
     // Print to Serial
     Serial.printf("MAC: %s RSSI: %d SSID: %s\n", macStr, rssi, ssid);
 
-    // Send via LoRa
-    char loraMessage[128];
-    snprintf(loraMessage, sizeof(loraMessage), "MAC:%s RSSI:%d SSID:%s", macStr, rssi, ssid);
-
-    int state = lora.transmit(loraMessage);
-    if (state == RADIOLIB_ERR_NONE) {
-      Serial.println("[LoRa] Transmitted successfully");
-    } else {
-      Serial.print("[LoRa] Transmit failed, code: ");
-      Serial.println(state);
-    }
   }
 }
 
 void loop() {
-    // Periodically switch Wi-Fi channels
-  if (millis() - lastChannelSwitch > channelSwitchInterval) {
+    if (millis() - lastChannelSwitch > channelSwitchInterval) {
     currentChannelIndex = (currentChannelIndex + 1) % (sizeof(wifiChannels) / sizeof(wifiChannels[0]));
     esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);
     Serial.print("Switched to Wi-Fi channel: ");
