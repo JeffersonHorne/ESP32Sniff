@@ -9,6 +9,12 @@ extern "C" {
 // Create an instance of SX1262 driver (NSS, DIO1, RESET, BUSY)
 SX1262 lora = new Module(8, 14, 12, 13);
 
+// Channel hopping setup
+const int wifiChannels[] = {1, 6, 11};
+int currentChannelIndex = 0;
+unsigned long lastChannelSwitch = 0;
+const unsigned long channelSwitchInterval = 5000; // switch every 5 seconds
+
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -31,7 +37,7 @@ void setup() {
   esp_wifi_start();          // Start Wi-Fi (needed for promiscuous mode)
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);  // Use channel 6 (busy channel)
+  esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);  // channel index 1,6,11
 
   Serial.println("Sniffer setup complete.");
 }
@@ -85,5 +91,13 @@ void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
 }
 
 void loop() {
+    // Periodically switch Wi-Fi channels
+  if (millis() - lastChannelSwitch > channelSwitchInterval) {
+    currentChannelIndex = (currentChannelIndex + 1) % (sizeof(wifiChannels) / sizeof(wifiChannels[0]));
+    esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);
+    Serial.print("Switched to Wi-Fi channel: ");
+    Serial.println(wifiChannels[currentChannelIndex]);
+    lastChannelSwitch = millis();
+  }
   delay(100);  // Idle loop, everything happens in callback
 }
