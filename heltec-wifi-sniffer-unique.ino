@@ -34,7 +34,7 @@ void setup() {
   esp_wifi_start();          // Start Wi-Fi (needed for promiscuous mode)
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);  // Use channel 6 (busy channel)
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);  // Start with channel 6 (busy channel)
 
   Serial.println("Sniffer setup complete.");
 }
