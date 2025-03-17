@@ -1,69 +1,103 @@
-#include "WiFi.h"
+// WiFi Probe Request Sniffer + LoRa SX1262 Transmitter (Heltec Wireless Stick V3)
+
+#include <WiFi.h>
+#include <RadioLib.h>
 extern "C" {
   #include "esp_wifi.h"
 }
 
-void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
-  // We only care about management packets (probe requests)
-  if (type != WIFI_PKT_MGMT) return;
+// Create an instance of SX1262 driver (NSS, DIO1, RESET, BUSY)
+SX1262 lora = new Module(8, 14, 12, 13);
 
-  wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
-  uint8_t *payload = pkt->payload;
-
-  // 802.11 Management frame subtype for Probe Request is 0x40 (Type 0, Subtype 4)
-  uint8_t frame_type = payload[0] & 0x0C;
-  uint8_t frame_subtype = payload[0] & 0xF0;
-
-  if (frame_type == 0x00 && frame_subtype == 0x40) {  // Probe Request
-    // Print MAC address of the device sending the probe request
-    char macStr[18];
-    sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
-            payload[10], payload[11], payload[12],
-            payload[13], payload[14], payload[15]);
-
-    int rssi = pkt->rx_ctrl.rssi;  // Signal strength (RSSI)
-
-    // SSID Parsing (starts after 24-byte management header)
-    int ssid_offset = 24;
-    while (ssid_offset < pkt->rx_ctrl.sig_len) {
-      uint8_t tag_number = payload[ssid_offset];    // Tag ID
-      uint8_t tag_length = payload[ssid_offset + 1]; // Tag Length
-
-      // SSID Tag (Tag ID 0)
-      if (tag_number == 0) {
-        char ssid[33] = {0};  // Max SSID length is 32 + null terminator
-        if (tag_length > 0 && tag_length <= 32) {
-          memcpy(ssid, &payload[ssid_offset + 2], tag_length); // Copy SSID
-        } else {
-          strcpy(ssid, "<hidden>");  // If SSID is hidden, mark it
-        }
-
-        // Print the found SSID and associated details
-        Serial.printf("Probe Request from %s | SSID: %s | RSSI: %d dBm\n",
-                      macStr, ssid, rssi);
-        break;  // Stop at first SSID tag (could be multiple SSIDs in a probe)
-      }
-
-      ssid_offset += 2 + tag_length; // Move to next tag
-    }
-  }
-}
+// Channel hopping setup
+const int wifiChannels[] = {1, 6, 11}; // switch between most popular 2.5Ghz channels
+int currentChannelIndex = 0;
+unsigned long lastChannelSwitch = 0;
+const unsigned long channelSwitchInterval = 5000; // switch every 5 seconds
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);  // Let Serial settle
+  delay(500);
 
+  Serial.println("[SX1262] Initializing...");
+  int state = lora.begin(915.0);  // 915 US
+
+  if (state == RADIOLIB_ERR_NONE) {
+    Serial.println("LoRa Init success!");
+  } else {
+    Serial.print("LoRa Init failed, code: ");
+    Serial.println(state);
+    while (true);  // Halt
+  }
+
+  // Set Wi-Fi to promiscuous mode
   Serial.println("Starting Wi-Fi sniffer...");
 
   WiFi.mode(WIFI_MODE_STA);  // Set Wi-Fi mode to Station (default)
   esp_wifi_start();          // Start Wi-Fi (needed for promiscuous mode)
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);  // Use channel 6 (busy channel)
+  esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);  // Channel index
 
   Serial.println("Sniffer setup complete.");
 }
 
+void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
+  if (type != WIFI_PKT_MGMT) return;
+
+  wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+  uint8_t *payload = pkt->payload;
+
+  uint8_t frame_type = payload[0] & 0x0C;
+  uint8_t frame_subtype = payload[0] & 0xF0;
+
+  if (frame_type == 0x00 && frame_subtype == 0x40) {  // Probe Request
+    char macStr[18];
+    sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+            payload[10], payload[11], payload[12],
+            payload[13], payload[14], payload[15]);
+
+    int rssi = pkt->rx_ctrl.rssi;
+
+    // Parse SSID
+    int ssid_offset = 24;
+    char ssid[33] = {0};
+    if (ssid_offset + 2 < pkt->rx_ctrl.sig_len) {
+      uint8_t tag_number = payload[ssid_offset];
+      uint8_t tag_length = payload[ssid_offset + 1];
+
+      if (tag_number == 0 && tag_length <= 32) {
+        memcpy(ssid, &payload[ssid_offset + 2], tag_length);
+      } else {
+        strcpy(ssid, "<hidden>");
+      }
+    }
+
+    // Print to Serial
+    Serial.printf("MAC: %s RSSI: %d SSID: %s\n", macStr, rssi, ssid);
+
+    // Send via LoRa
+    char loraMessage[128];
+    snprintf(loraMessage, sizeof(loraMessage), "MAC:%s RSSI:%d SSID:%s", macStr, rssi, ssid);
+
+    int state = lora.transmit(loraMessage);
+    if (state == RADIOLIB_ERR_NONE) {
+      Serial.println("[LoRa] Transmitted successfully");
+    } else {
+      Serial.print("[LoRa] Transmit failed, code: ");
+      Serial.println(state);
+    }
+  }
+}
+
 void loop() {
-  delay(1000);  // Keep the loop alive and responsive
+    // Periodically switch Wi-Fi channels
+  if (millis() - lastChannelSwitch > channelSwitchInterval) {
+    currentChannelIndex = (currentChannelIndex + 1) % (sizeof(wifiChannels) / sizeof(wifiChannels[0]));
+    esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);
+    Serial.print("Switched to Wi-Fi channel: ");
+    Serial.println(wifiChannels[currentChannelIndex]);
+    lastChannelSwitch = millis();
+  }
+  delay(100);  // Idle loop, everything happens in callback
 }
