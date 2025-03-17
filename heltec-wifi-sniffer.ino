@@ -10,7 +10,7 @@ extern "C" {
 SX1262 lora = new Module(8, 14, 12, 13);
 
 // Channel hopping setup
-const int wifiChannels[] = {1, 6, 11}; // switch between most popular 2.5Ghz channels
+const int wifiChannels[] = {1, 6, 11};
 int currentChannelIndex = 0;
 unsigned long lastChannelSwitch = 0;
 const unsigned long channelSwitchInterval = 5000; // switch every 5 seconds
@@ -37,7 +37,7 @@ void setup() {
   esp_wifi_start();          // Start Wi-Fi (needed for promiscuous mode)
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);  // Channel index
+  esp_wifi_set_channel(wifiChannels[currentChannelIndex], WIFI_SECOND_CHAN_NONE);  // channel index 1,6,11
 
   Serial.println("Sniffer setup complete.");
 }
